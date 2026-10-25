@@ -13,6 +13,29 @@ You can find our backwards-compatibility policy [here](https://github.com/hynek/
 <!-- changelog follows -->
 
 
+## [26.2.0](https://github.com/hynek/structlog/compare/26.1.0...26.2.0) - unreleased
+
+### Added
+
+- The configured processor chain is now a first-class, generation-aware object: `structlog.ProcessorChain`.
+  It behaves like the processor `list` it replaces, but exposes an observable `generation` and supports context-local *views*.
+- `structlog.get_processor_chain()` returns the currently installed chain alias, and `structlog.get_processor_generation()` returns the generation visible in the current context.
+  The generation advances when `structlog.configure` installs a new chain, when `structlog.reset_defaults` restores the defaults, and for the duration of a context-local overlay (such as `structlog.testing.capture_logs`).
+- `structlog.stdlib.ProcessorFormatter` gained an `isolate_foreign_processors` argument.
+  When enabled, `foreign_pre_chain` and `processors` are shallow-copied for every *non*-structlog (`logging`) record, so mutable state shared with the configured chain can no longer be permanently changed while formatting a foreign record.
+
+### Changed
+
+- `structlog.testing.capture_logs` no longer mutates the configured processor list in place.
+  It installs a temporary context-local generation on the existing chain alias instead.
+  Already-bound (and cached) loggers keep being captured (issue #408), captures are reentrant and can be nested, and concurrent captures in other threads or `asyncio` tasks are isolated: each context only sees its own temporary chain and its own entries.
+  Global configuration itself (`structlog.configure`) remains global and not thread-safe, as before.
+- `structlog.reset_defaults` now installs both a fresh chain generation *and* fresh built-in processor instances.
+  State hot-changed on the active `structlog.dev.ConsoleRenderer` (for example through `ConsoleRenderer.get_active()`) can no longer leak across a reset.
+- `structlog.dev.ConsoleRenderer` publishes column layout changes atomically and snapshots the active layout once per `__call__`, so a hot reconfiguration from another thread or task can no longer produce a half-updated column layout in a render already in progress.
+- With `cache_logger_on_first_use` enabled, a materialized lazy proxy's `new()` now clears the cached logger's context before binding, matching `BoundLoggerBase.new` semantics instead of silently behaving like an additive `bind()`.
+
+
 ## [26.1.0](https://github.com/hynek/structlog/compare/25.5.0...26.1.0) - 2026-06-06
 
 ### Removed

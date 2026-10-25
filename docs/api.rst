@@ -42,6 +42,13 @@ API Reference
 
 .. autofunction:: get_config
 
+.. autofunction:: get_processor_chain
+
+.. autofunction:: get_processor_generation
+
+.. autoclass:: ProcessorChain
+   :members: generation
+
 .. autoclass:: BoundLogger
    :members: new, bind, unbind
 

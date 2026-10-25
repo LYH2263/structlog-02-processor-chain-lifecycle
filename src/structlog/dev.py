@@ -861,7 +861,7 @@ class ConsoleRenderer:
             level_to_color[key] += self._styles.bright
         self._longest_level = len(max(level_to_color.keys(), key=len))
 
-        self._default_column_formatter = KeyValueColumnFormatter(
+        default_column_formatter = KeyValueColumnFormatter(
             self._styles.kv_key,
             self._styles.kv_value,
             self._styles.reset,
@@ -880,7 +880,7 @@ class ConsoleRenderer:
 
         level_width = 0 if not self._pad_level else None
 
-        self._columns = [
+        columns = [
             Column(
                 self._timestamp_key,
                 KeyValueColumnFormatter(
@@ -912,6 +912,17 @@ class ConsoleRenderer:
             Column("logger_name", logger_name_formatter),
         ]
 
+        # Keep the legacy attributes in sync for backwards compatibility,
+        # then publish the *complete* layout through a single attribute write.
+        # A concurrent __call__ can thus never observe a half-rebuilt layout
+        # (stable snapshot semantics).
+        self._default_column_formatter = default_column_formatter
+        self._columns = columns
+        self._active_columns = [
+            Column("", default_column_formatter),
+            *columns,
+        ]
+
     def _repr(self, val: Any) -> str:
         """
         Determine representation of *val* depending on its type &
@@ -930,17 +941,26 @@ class ConsoleRenderer:
     def __call__(
         self, logger: WrappedLogger, name: str, event_dict: EventDict
     ) -> str:
+        # Snapshot the atomically published layout once: another thread or
+        # task may hot-change colors/columns/etc. through get_active(), but it
+        # can never make us render a half-updated column layout.  The default
+        # column is the first entry of the published layout.
+        columns = self._active_columns
+        default_column_formatter = columns[0].formatter
+        sort_keys = self._sort_keys
+        exception_formatter = self._exception_formatter
+
         stack = event_dict.pop("stack", None)
         exc = event_dict.pop("exception", None)
         exc_info = event_dict.pop("exc_info", None)
 
         kvs = [
             col.formatter(col.key, val)
-            for col in self.columns
+            for col in columns
             if (val := event_dict.pop(col.key, _NOTHING)) is not _NOTHING
         ] + [
-            self._default_column_formatter(key, event_dict[key])
-            for key in (sorted(event_dict) if self._sort_keys else event_dict)
+            default_column_formatter(key, event_dict[key])
+            for key in (sorted(event_dict) if sort_keys else event_dict)
         ]
 
         sio = StringIO()
@@ -953,7 +973,7 @@ class ConsoleRenderer:
 
         exc_info = _figure_out_exc_info(exc_info)
         if exc_info:
-            self._exception_formatter(sio, exc_info)
+            exception_formatter(sio, exc_info)
         elif exc is not None:
             sio.write("\n" + exc)
 
@@ -1014,7 +1034,7 @@ class ConsoleRenderer:
 
         .. versionadded:: 25.5.0
         """
-        return [Column("", self._default_column_formatter), *self._columns]
+        return list(self._active_columns)
 
     @columns.setter
     def columns(self, value: list[Column]) -> None:
@@ -1029,8 +1049,14 @@ class ConsoleRenderer:
         if len(defaults) > 1:
             raise ValueError("Only one default column formatter allowed.")
 
-        self._default_column_formatter = defaults[0].formatter
-        self._columns = [col for col in value if col.key]
+        default_formatter = defaults[0].formatter
+        named = [col for col in value if col.key]
+
+        # Publish legacy attributes and the complete layout atomically (see
+        # `_configure_columns`).
+        self._default_column_formatter = default_formatter
+        self._columns = named
+        self._active_columns = [Column("", default_formatter), *named]
 
     @property
     def colors(self) -> bool:

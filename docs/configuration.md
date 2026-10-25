@@ -105,3 +105,7 @@ We don't believe silent loggers are a sensible default.
 
 You will meet {doc}`processors` in the next chapter.
 They are configured using the `processors` keyword that takes an {class}`~collections.abc.Iterable` of callables that act as processors.
+
+The configured processors live on a {class}`~structlog.ProcessorChain` object that is shared *by reference* with every bound logger.
+You can inspect the currently active chain at any time using {func}`~structlog.get_processor_chain` and its observable, monotonically increasing {attr}`~structlog.ProcessorChain.generation` (or the shorthand {func}`~structlog.get_processor_generation`).
+A new generation starts whenever the chain is replaced through {func}`~structlog.configure` or {func}`~structlog.reset_defaults`, and whenever a context-local view like {func}`structlog.testing.capture_logs` is entered or left, so tests can assert which generation a logger is looking at.

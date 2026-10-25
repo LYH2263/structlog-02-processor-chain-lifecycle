@@ -19,10 +19,13 @@ from structlog import (
 )
 from structlog._base import BoundLoggerBase, get_context
 from structlog._config import (
+    ProcessorChain,
     configure,
     configure_once,
     get_config,
     get_logger,
+    get_processor_chain,
+    get_processor_generation,
     getLogger,
     is_configured,
     reset_defaults,
@@ -64,6 +67,7 @@ __all__ = [
     "DropEvent",
     "PrintLogger",
     "PrintLoggerFactory",
+    "ProcessorChain",
     "ReturnLogger",
     "ReturnLoggerFactory",
     "WriteLogger",
@@ -76,6 +80,8 @@ __all__ = [
     "get_config",
     "get_context",
     "get_logger",
+    "get_processor_chain",
+    "get_processor_generation",
     "is_configured",
     "make_filtering_bound_logger",
     "processors",

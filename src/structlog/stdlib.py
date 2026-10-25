@@ -20,6 +20,7 @@ import threading
 import warnings
 
 from collections.abc import Callable, Collection, Iterable, Sequence
+from copy import copy
 from functools import partial
 from typing import Any, cast
 
@@ -102,6 +103,7 @@ def recreate_defaults(*, log_level: int | None = logging.NOTSET) -> None:
         )
 
     _config.reset_defaults()
+    builtin_defaults = _config._make_default_processors()
     _config.configure(
         processors=[
             PositionalArgumentsFormatter(),  # handled by native loggers
@@ -109,8 +111,8 @@ def recreate_defaults(*, log_level: int | None = logging.NOTSET) -> None:
             add_log_level,
             add_logger_name,
             StackInfoRenderer(),
-            _config._BUILTIN_DEFAULT_PROCESSORS[-2],  # TimeStamper
-            _config._BUILTIN_DEFAULT_PROCESSORS[-1],  # ConsoleRenderer
+            builtin_defaults[-2],  # TimeStamper
+            builtin_defaults[-1],  # ConsoleRenderer
         ],
         wrapper_class=BoundLogger,
         logger_factory=LoggerFactory(),
@@ -1080,6 +1082,15 @@ class ProcessorFormatter(logging.Formatter):
             If True, use ``record.getMessage`` to get a fully rendered log
             message, otherwise use ``str(record.msg)``. (default: True)
 
+        isolate_foreign_processors:
+            If True, *foreign_pre_chain* and *processors* are shallow-copied
+            for every **non**-*structlog* (`logging`) record before they are
+            run. Use this when these chains share *stateful* processor
+            instances with the configured *structlog* chain: mutable state
+            touched while formatting a foreign record can then never leak into
+            later *structlog* emissions. Stateless callables (plain
+            functions) are shared as before. (default: False)
+
     Raises:
         TypeError: If both or neither *processor* and *processors* are passed.
 
@@ -1092,6 +1103,7 @@ class ProcessorFormatter(logging.Formatter):
        *processor* (singular) in favor of *processors* (plural). Removal is not
        planned.
     .. versionadded:: 23.3.0 *use_get_message*
+    .. versionadded:: 26.2.0 *isolate_foreign_processors*
     """
 
     def __init__(
@@ -1104,6 +1116,7 @@ class ProcessorFormatter(logging.Formatter):
         logger: logging.Logger | None = None,
         pass_foreign_args: bool = False,
         use_get_message: bool = True,
+        isolate_foreign_processors: bool = False,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -1132,6 +1145,7 @@ class ProcessorFormatter(logging.Formatter):
         self.logger = logger
         self.pass_foreign_args = pass_foreign_args
         self.use_get_message = use_get_message
+        self.isolate_foreign_processors = isolate_foreign_processors
 
     def format(self, record: logging.LogRecord) -> str:
         """
@@ -1148,6 +1162,9 @@ class ProcessorFormatter(logging.Formatter):
         meth_name = getattr(record, "_name", "__structlog_sentinel__")
 
         ed: ProcessorReturnValue
+        # Per-record chain; overwritten with transient copies in the foreign
+        # branch when isolation is requested.
+        processors: Sequence[Processor] = self.processors
         if logger is not _SENTINEL and meth_name != "__structlog_sentinel__":
             # Both attached by wrap_for_formatter
             if self.logger is not None:
@@ -1186,7 +1203,17 @@ class ProcessorFormatter(logging.Formatter):
 
             # Non-structlog allows to run through a chain to prepare it for the
             # final processor (e.g. adding timestamps and log levels).
-            for proc in self.foreign_pre_chain or ():
+            foreign_pre_chain = self.foreign_pre_chain
+            if self.isolate_foreign_processors:
+                # Run the foreign record on transient copies, so mutable
+                # processor state can't be permanently changed for later
+                # structlog emissions that share these processor instances.
+                foreign_pre_chain = [
+                    copy(proc) for proc in (foreign_pre_chain or ())
+                ]
+                processors = [copy(proc) for proc in processors]
+
+            for proc in foreign_pre_chain or ():
                 ed = cast(EventDict, proc(logger, meth_name, ed))
 
         # If required, unset stack-related attributes on the record copy so
@@ -1198,7 +1225,7 @@ class ProcessorFormatter(logging.Formatter):
         if not self.keep_stack_info:
             record.stack_info = None
 
-        for p in self.processors:
+        for p in processors:
             ed = p(logger, meth_name, ed)  # type: ignore[arg-type]
 
         if not isinstance(ed, str):

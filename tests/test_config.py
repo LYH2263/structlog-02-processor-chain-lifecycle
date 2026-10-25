@@ -31,6 +31,15 @@ from structlog.typing import BindableLogger
 from .helpers import call_recorder, stub
 
 
+def _processor_types(processors):
+    """
+    Compare default processor chains by their structure (processor types)
+    rather than by instance identity: reset_defaults() now installs fresh
+    built-in processor instances so mutable state can't leak across resets.
+    """
+    return [type(p) for p in processors]
+
+
 @pytest.fixture(name="proxy")
 def _proxy():
     """
@@ -125,7 +134,9 @@ class TestConfigure:
         b = proxy.bind()
 
         assert [x] != b._processors
-        assert _BUILTIN_DEFAULT_PROCESSORS == b._processors
+        assert _processor_types(
+            _BUILTIN_DEFAULT_PROCESSORS
+        ) == _processor_types(b._processors)
         assert isinstance(b, _BUILTIN_DEFAULT_WRAPPER_CLASS)
         assert _BUILTIN_DEFAULT_CONTEXT_CLASS == b._context.__class__
         assert _BUILTIN_DEFAULT_LOGGER_FACTORY is _CONFIG.logger_factory
@@ -150,7 +161,9 @@ class TestConfigure:
         b = proxy.bind()
 
         assert dict is b._context.__class__
-        assert _BUILTIN_DEFAULT_PROCESSORS == b._processors
+        assert _processor_types(
+            _BUILTIN_DEFAULT_PROCESSORS
+        ) == _processor_types(b._processors)
 
     def test_configure_sets_is_configured(self):
         """
@@ -451,7 +464,9 @@ class TestFunctions:
         assert isinstance(
             b._logger, _BUILTIN_DEFAULT_LOGGER_FACTORY().__class__
         )
-        assert _BUILTIN_DEFAULT_PROCESSORS == b._processors
+        assert _processor_types(
+            _BUILTIN_DEFAULT_PROCESSORS
+        ) == _processor_types(b._processors)
         assert isinstance(b, _BUILTIN_DEFAULT_WRAPPER_CLASS)
         assert _BUILTIN_DEFAULT_CONTEXT_CLASS == b._context.__class__
 

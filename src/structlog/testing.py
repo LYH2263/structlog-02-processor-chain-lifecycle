@@ -17,7 +17,7 @@ from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from typing import Any, NamedTuple, NoReturn
 
-from ._config import configure, get_config
+from . import _config
 from ._log_levels import map_method_name
 from .exceptions import DropEvent
 from .typing import EventDict, Processor, WrappedLogger
@@ -72,32 +72,49 @@ def capture_logs(
     while it is active. Disables all configured processors for the duration
     of the context manager.
 
-    Attention: this is **not** thread-safe!
+    The capture is installed as a temporary generation on top of the
+    currently configured processor chain:
+
+    - Loggers that were already bound and still hold the configured chain's
+      list reference are captured too -- the list itself is never replaced
+      (this used to cause already-bound loggers to be missed, see issue
+      #408).
+    - Captures can be nested.  Events emitted while the inner capture is
+      active only appear in the inner list; after it is left, the outer
+      capture receives events again.
+    - Concurrent captures in other threads or asyncio tasks are isolated:
+      each context only sees its own temporary chain and its own entries.
+      Logging from contexts without an active capture keeps using the
+      physical production chain and is not redirected.
+
+    Configuring *structlog* itself (for example with `configure`) remains
+    global and is not thread-safe, just like the rest of the global
+    configuration.
 
     Args:
         processors: Processors to apply before the logs are captured.
 
     .. versionadded:: 20.1.0
     .. versionadded:: 25.5.0 *processors* parameter
+    .. versionchanged:: 26.2.0
+       The capture no longer mutates the configured processor list in place.
+       It is now reentrant, can be nested, and is isolated between concurrent
+       threads and asyncio tasks.
     """
     cap = LogCapture()
-    # Modify `_Configuration.default_processors` set via `configure` but always
-    # keep the list instance intact to not break references held by bound
-    # loggers.
-    configured_processors = get_config()["processors"]
-    old_processors = configured_processors.copy()
+    # Install a context-local view on the *current* configured chain alias.
+    # The chain's physical contents stay untouched, which is what makes the
+    # overlay reentrant and isolated while still reaching already-bound
+    # loggers (they iterate the same alias and thus resolve the view).
+    chain = _config._CONFIG.default_processors
+    temporary_processors: tuple[Processor, ...] = (*processors, cap)
+    token, _view = _config._push_chain_view(
+        chain, temporary_processors, label="capture_logs"
+    )
     try:
-        # clear processors list and use LogCapture for testing
-        configured_processors.clear()
-        configured_processors.extend(processors)
-        configured_processors.append(cap)
-        configure(processors=configured_processors)
         yield cap.entries
     finally:
-        # remove LogCapture and restore original processors
-        configured_processors.clear()
-        configured_processors.extend(old_processors)
-        configure(processors=configured_processors)
+        _config._pop_chain_view(token)
 
 
 class ReturnLogger:

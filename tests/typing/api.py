@@ -412,3 +412,12 @@ cr.event_key = "le event"
 
 cr.repr_native_str
 cr.repr_native_str = True
+
+
+# Processor chain introspection
+
+chain: structlog.ProcessorChain = structlog.get_processor_chain()
+generation: int = chain.generation
+generation = structlog.get_processor_generation()
+processor: structlog.typing.Processor = chain[0]
+chain_len: int = len(chain)

@@ -15,6 +15,17 @@ If you need functionality similar to {meth}`unittest.TestCase.assertLogs`, or yo
 
 Note that inside the context manager all configured processors are disabled.
 
+:::{note}
+`capture_logs()` installs its capture as a *temporary, context-local generation*
+on top of the currently configured processor chain: it never replaces the
+underlying list instance. Therefore loggers that were already bound -- including
+materialized loggers with *cache_logger_on_first_use* -- keep getting captured.
+Nested `capture_logs()` blocks don't mix their entries, and concurrent captures in
+other threads or `asyncio` tasks are isolated from each other; loggers running in
+contexts without an active capture keep using the physical production chain.
+Loggers bound with an explicit *processors* argument always keep their own chain.
+:::
+
 If you want to capture logs after certain processors have been applied, they can be passed to the context manager.
 For example, to capture {doc}`contextvars`:
 
@@ -29,8 +40,9 @@ For example, to capture {doc}`contextvars`:
 ```
 
 :::{note}
-`capture_logs()` relies on changing the configuration.
-If you have *cache_logger_on_first_use* enabled for {doc}`performance <performance>`, any cached loggers will not be affected, so it’s recommended you do not enable it during tests.
+`capture_logs()` doesn't call {func}`structlog.configure`; it overlays a
+context-local generation on the current processor chain. This is what makes it
+reentrant and safe to nest or use concurrently in threads and `asyncio` tasks.
 :::
 
 You can build your own helpers using {class}`structlog.testing.LogCapture`.
